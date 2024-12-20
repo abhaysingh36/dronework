@@ -182,7 +182,7 @@ class ObjectDetection(QThread):
         super().__init__()
         self.label = label
         self.running = True
-        self.cap = cv2.VideoCapture("http://127.0.0.1:5000/video_feed")  # Flask feed URL
+        self.cap = cv2.VideoCapture("http://192.0.0.2:5000/video_feed")  # Flask feed URL
 
         # Check if the webcam feed is opened correctly
         if not self.cap.isOpened():
