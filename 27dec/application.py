@@ -12,6 +12,8 @@ import cv2
 import numpy as np
 from PyQt6.QtCore import QUrl
 from pymavlink import mavutil
+import folium
+from PyQt6.QtCore import QTimer
 class MarkerHandler(QObject):
     @pyqtSlot(float, float)
     def addMarker(self, lat: float, lon: float):
@@ -127,6 +129,63 @@ class GPSCalibrationTab(QWidget):
             self.status_label.setText(f"Status: Marker set at {lat}, {lon}")
         except ValueError:
             self.status_label.setText("Status: Invalid coordinates! Use 'latitude,longitude' format.")
+class MapMonitoringTab(QWidget):
+    def __init__(self, drone):
+        super().__init__()
+        self.drone = drone
+
+        # Layout
+        self.layout = QVBoxLayout()
+        self.setLayout(self.layout)
+
+        # WebEngineView to display the map
+        self.map_view = QWebEngineView()
+        self.layout.addWidget(self.map_view)
+
+        # Initialize map
+        self.init_map()
+
+        # Timer for dynamic updates
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_map)
+        self.update_timer.start(1000)  # Update every 1 second
+
+    def init_map(self):
+        """Initialize the map with a default location."""
+        # Default location (latitude, longitude)
+        self.current_location = (0.0, 0.0)
+        self.map = folium.Map(location=self.current_location, zoom_start=15)
+
+        # Save the map to an HTML file
+        self.map_file = "map.html"
+        self.save_map()
+
+        # Load the map into the view
+        self.map_view.setUrl(QUrl.fromLocalFile(self.map_file))
+
+    def save_map(self):
+        """Save the map to an HTML file."""
+        folium.Marker(self.current_location, popup="Drone Location").add_to(self.map)
+        self.map.save(self.map_file)
+
+    def update_map(self):
+        """Update the map with the drone's current GPS position."""
+        try:
+            if self.drone:
+                # Fetch current GPS coordinates from the drone
+                lat, lon = self.drone.get_gps_coordinates()
+                self.current_location = (lat, lon)
+
+                # Update the map
+                self.map = folium.Map(location=self.current_location, zoom_start=15)
+                folium.Marker(self.current_location, popup="Drone Location").add_to(self.map)
+
+                # Save and reload the map
+                self.save_map()
+                self.map_view.setUrl(QUrl.fromLocalFile(self.map_file))
+        except Exception as e:
+            print(f"Error updating map: {e}")
+
 
 
 class camerafeedtab(QWidget):
@@ -238,31 +297,31 @@ class ObjectDetection(QThread):
 
 
 
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("PyQt6 Application")
+# class MainWindow(QMainWindow):
+#     def __init__(self):
+#         super().__init__()
+#         self.setWindowTitle("PyQt6 Application")
 
-        self.tabs = QTabWidget()
-        self.setCentralWidget(self.tabs)
+#         self.tabs = QTabWidget()
+#         self.setCentralWidget(self.tabs)
 
-        self.tabs.addTab(GPSCalibrationTab(), "GPS Calibration")
+#         self.tabs.addTab(GPSCalibrationTab(), "GPS Calibration")
       
-        self.tabs.addTab(camerafeedtab(), "Flask Camera Feed")
+#         self.tabs.addTab(camerafeedtab(), "Flask Camera Feed")
 
-        self.apply_dark_theme()
+#         self.apply_dark_theme()
 
-    def apply_dark_theme(self):
-        self.setStyleSheet("""
-            QMainWindow {
-                background-color: #121212;
-                color: white;
-            }
-            QTabBar::tab {
-                background: #1e1e1e;
-                color: white;
-            }
-        """)
+#     def apply_dark_theme(self):
+#         self.setStyleSheet("""
+#             QMainWindow {
+#                 background-color: #121212;
+#                 color: white;
+#             }
+#             QTabBar::tab {
+#                 background: #1e1e1e;
+#                 color: white;
+#             }
+#         """)
 
 class DroneControl:
     def __init__(self, connection_string, baudrate=57600):
@@ -453,9 +512,12 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.setCentralWidget(self.tabs)
-
+        self.map_monitoring_tab = MapMonitoringTab(self.drone)
         self.tabs.addTab(GPSCalibrationTab(), "GPS Calibration")
         self.tabs.addTab(camerafeedtab(), "Flask Camera Feed")
+        
+       
+
         
         if self.drone:
             self.tabs.addTab(DroneControlTab(self.drone), "Drone Control")
@@ -475,6 +537,24 @@ class MainWindow(QMainWindow):
                 color: white;
             }
         """)
+
+    def stop_all_resources(self):
+       """Clean up resources like threads and connections."""
+       # Stop camera feed thread
+       if self.camera_feed_tab.video_thread is not None:
+           self.camera_feed_tab.video_thread.stop()
+           self.camera_feed_tab.video_thread.wait()
+       # Disconnect drone connection
+       if self.drone:
+           try:
+               self.drone.connection.close()
+               print("Drone connection closed.")
+           except Exception as e:
+               print(f"Error closing drone connection: {e}")
+    def closeEvent(self, event):
+        """Handle application exit to release resources."""
+        self.stop_all_resources()
+        super().closeEvent(event)
 
 
 
