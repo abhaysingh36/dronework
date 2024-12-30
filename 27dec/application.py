@@ -14,6 +14,7 @@ from PyQt6.QtCore import QUrl
 from pymavlink import mavutil
 import folium
 from PyQt6.QtCore import QTimer
+import socket
 class MarkerHandler(QObject):
     @pyqtSlot(float, float)
     def addMarker(self, lat: float, lon: float):
@@ -36,6 +37,8 @@ class GPSCalibrationTab(QWidget):
 
         self.map_view.setHtml(self.generate_google_map_html())
         layout.addWidget(self.map_view)
+
+
 
         coord_layout = QHBoxLayout()
         coord_layout.addWidget(QLabel("Enter GPS Coordinates:"))
@@ -297,31 +300,6 @@ class ObjectDetection(QThread):
 
 
 
-# class MainWindow(QMainWindow):
-#     def __init__(self):
-#         super().__init__()
-#         self.setWindowTitle("PyQt6 Application")
-
-#         self.tabs = QTabWidget()
-#         self.setCentralWidget(self.tabs)
-
-#         self.tabs.addTab(GPSCalibrationTab(), "GPS Calibration")
-      
-#         self.tabs.addTab(camerafeedtab(), "Flask Camera Feed")
-
-#         self.apply_dark_theme()
-
-#     def apply_dark_theme(self):
-#         self.setStyleSheet("""
-#             QMainWindow {
-#                 background-color: #121212;
-#                 color: white;
-#             }
-#             QTabBar::tab {
-#                 background: #1e1e1e;
-#                 color: white;
-#             }
-#         """)
 
 class DroneControl:
     def __init__(self, connection_string, baudrate=57600):
@@ -330,6 +308,19 @@ class DroneControl:
         print("Waiting for heartbeat...")
         self.connection.wait_heartbeat()
         print(f"Heartbeat received from system {self.connection.target_system}, component {self.connection.target_component}")
+
+        # Request default data streams
+        self.connection.mav.request_data_stream_send(
+            self.connection.target_system,
+            self.connection.target_component,
+            mavutil.mavlink.MAV_DATA_STREAM_ALL,
+            1,  # Rate in Hz
+            1   # Enable stream
+        )
+
+    def start_client(host='192.168.199.71', port=5555):
+        client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        client.connect((host, port))
 
     def arm(self):
         """Arm the drone."""
@@ -341,7 +332,7 @@ class DroneControl:
             1,  # 1 to arm, 0 to disarm
             0, 0, 0, 0, 0, 0  # Unused parameters
         )
-        print("Drone armed!")
+        
 
     def disarm(self):
         """Disarm the drone."""
@@ -355,19 +346,20 @@ class DroneControl:
         )
         print("Drone disarmed!")
 
-    def set_mode(self, mode):
-        """Set the flight mode of the drone."""
-        mode_mapping = self.connection.mode_mapping()
-        if mode not in mode_mapping:
-            print(f"Unknown mode: {mode}")
-            return
-        mode_id = mode_mapping[mode]
-        self.connection.mav.set_mode_send(
-            self.connection.target_system,
-            mavutil.mavlink.MAV_MODE_FLAG_CUSTOM_MODE_ENABLED,
-            mode_id
-        )
-        print(f"Mode set to {mode}")
+    def get_gps_coordinates(self):
+        """Retrieve the current GPS coordinates of the drone."""
+        try:
+            msg = self.connection.recv_match(type='GLOBAL_POSITION_INT', blocking=True)
+            if msg:
+                lat = msg.lat * 1e-7
+                lon = msg.lon * 1e-7
+                alt = msg.relative_alt * 1e-3
+                return lat, lon, alt
+            else:
+                return None, None, None
+        except Exception as e:
+            print(f"Error retrieving GPS coordinates: {e}")
+            return None, None, None
 
     def send_gps_waypoint(self, lat, lon, alt=10):
         """Send a GPS waypoint to the drone."""
@@ -386,18 +378,11 @@ class DroneControl:
         )
         print(f"Waypoint sent: {lat}, {lon}, Altitude: {alt}")
 
-    def monitor_position(self):
-        """Monitor and print the drone's position."""
-        try:
-            while True:
-                msg = self.connection.recv_match(type='GLOBAL_POSITION_INT', blocking=True)
-                print(f"Lat: {msg.lat * 1e-7}, Lon: {msg.lon * 1e-7}, Alt: {msg.relative_alt * 1e-3}")
-        except KeyboardInterrupt:
-            print("Monitoring stopped.")
-class DroneControlTab(QWidget):
+
+class DroneControlWidget(QWidget):
     def __init__(self, drone):
         super().__init__()
-        self.drone = drone  # Instance of the DroneControl class
+        self.drone = drone
 
         layout = QVBoxLayout()
 
@@ -409,22 +394,11 @@ class DroneControlTab(QWidget):
         arm_disarm_layout = QHBoxLayout()
         self.arm_button = QPushButton("Arm Drone")
         self.disarm_button = QPushButton("Disarm Drone")
-        self.arm_button.clicked.connect(self.arm_drone)
-        self.disarm_button.clicked.connect(self.disarm_drone)
+        self.arm_button.clicked.connect(self.on_arm_clicked)
+        self.disarm_button.clicked.connect(self.on_disarm_clicked)
         arm_disarm_layout.addWidget(self.arm_button)
         arm_disarm_layout.addWidget(self.disarm_button)
         layout.addLayout(arm_disarm_layout)
-
-        # Flight Mode Dropdown
-        flight_mode_layout = QHBoxLayout()
-        self.flight_mode_label = QLabel("Flight Mode:")
-        self.flight_mode_dropdown = QLineEdit()
-        self.set_mode_button = QPushButton("Set Mode")
-        self.set_mode_button.clicked.connect(self.set_flight_mode)
-        flight_mode_layout.addWidget(self.flight_mode_label)
-        flight_mode_layout.addWidget(self.flight_mode_dropdown)
-        flight_mode_layout.addWidget(self.set_mode_button)
-        layout.addLayout(flight_mode_layout)
 
         # Waypoint Input
         waypoint_layout = QHBoxLayout()
@@ -432,7 +406,7 @@ class DroneControlTab(QWidget):
         self.waypoint_input = QLineEdit()
         waypoint_layout.addWidget(self.waypoint_input)
         self.send_waypoint_button = QPushButton("Send Waypoint")
-        self.send_waypoint_button.clicked.connect(self.send_waypoint)
+        self.send_waypoint_button.clicked.connect(self.on_send_waypoint_clicked)
         waypoint_layout.addWidget(self.send_waypoint_button)
         layout.addLayout(waypoint_layout)
 
@@ -447,29 +421,24 @@ class DroneControlTab(QWidget):
 
         self.setLayout(layout)
 
-    def arm_drone(self):
+    def on_arm_clicked(self):
+        """Handles the arm button click."""
         try:
             self.drone.arm()
             self.status_label.setText("Status: Drone armed")
         except Exception as e:
             self.status_label.setText(f"Error: {e}")
 
-    def disarm_drone(self):
+    def on_disarm_clicked(self):
+        """Handles the disarm button click."""
         try:
             self.drone.disarm()
             self.status_label.setText("Status: Drone disarmed")
         except Exception as e:
             self.status_label.setText(f"Error: {e}")
 
-    def set_flight_mode(self):
-        mode = self.flight_mode_dropdown.text()
-        try:
-            self.drone.set_mode(mode)
-            self.status_label.setText(f"Status: Mode set to {mode}")
-        except Exception as e:
-            self.status_label.setText(f"Error: {e}")
-
-    def send_waypoint(self):
+    def on_send_waypoint_clicked(self):
+        """Handles the send waypoint button click."""
         try:
             lat, lon, alt = map(float, self.waypoint_input.text().split(","))
             self.drone.send_gps_waypoint(lat, lon, alt)
@@ -482,11 +451,11 @@ class DroneControlTab(QWidget):
     def monitor_position(self):
         def update_position():
             try:
-                for msg in self.drone.connection.recv_match(type='GLOBAL_POSITION_INT', blocking=True):
-                    lat = msg.lat * 1e-7
-                    lon = msg.lon * 1e-7
-                    alt = msg.relative_alt * 1e-3
+                lat, lon, alt = self.drone.get_gps_coordinates()
+                if lat is not None:
                     self.position_label.setText(f"Position: Lat {lat}, Lon {lon}, Alt {alt}")
+                else:
+                    self.position_label.setText("Error: Unable to get position")
             except Exception as e:
                 self.position_label.setText(f"Error: {e}")
 
@@ -494,15 +463,13 @@ class DroneControlTab(QWidget):
         position_thread.run = update_position
         position_thread.start()
 
-
-# Update MainWindow to include the Drone Control tab
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("PyQt6 Application")
 
         # Initialize DroneControl instance
-        connection_string = "127.0.0.1:14550"  # Replace with your drone's connection string
+        connection_string = "/dev/ttyACM0" 
         try:
             self.drone = DroneControl(connection_string)
             drone_status = "Connected"
@@ -520,7 +487,7 @@ class MainWindow(QMainWindow):
 
         
         if self.drone:
-            self.tabs.addTab(DroneControlTab(self.drone), "Drone Control")
+            self.tabs.addTab(DroneControlWidget(self.drone), "Drone Control")
         else:
             print(drone_status)
 
