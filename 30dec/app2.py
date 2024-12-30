@@ -2,7 +2,7 @@ import sys
 import torch
 from PyQt6.QtWidgets import (
         QApplication, QMainWindow, QTabWidget, QWidget, QVBoxLayout,
-        QLabel, QPushButton, QLineEdit, QHBoxLayout
+        QLabel, QPushButton, QLineEdit, QHBoxLayout , QComboBox
     )
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWebChannel import QWebChannel
@@ -21,17 +21,18 @@ client = None
 # Function to handle communication with the server
 class Client:
     def __init__(self):
+           
+        self.is_connected = False
         self.host='192.168.199.71' 
         self.port=5555
-        # self.client=socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # self.client.connect((self.host,self.port))        
-        self.is_connected = False
+        
 
     def send(self,data):
-        self.client.send(data.encode("utf-8"))
+        self.client=socket.socket(socket.AF_INET, socket.SOCK_STREAM);self.client.connect((self.host,self.port)) if self.is_connected else print()
+        self.client.send(data)
 
     def connect(self):
-       while not self.is_connected:
+       
             try:
                self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                self.socket.connect((self.host, self.port))
@@ -41,15 +42,18 @@ class Client:
                 print(f"Connection failed: {e}. Retrying...")
                 time.sleep(5)
 
-    def send_command(self, command):
-        if self.is_connected:
+    def disconnect(self):
+        if self.is_connected and self.socket:
             try:
-                self.socket.sendall(command.encode())
-            except socket.error as e:
-                print(f"Error sending command: {e}")
+                self.socket.close()  # Close the socket
                 self.is_connected = False
-                self.connect()
+                print("Disconnected from server")
+            except socket.error as e:
+                print(f"Error during disconnection: {e}")
+        else:
+            print("No active connection to disconnect.")
 
+    
 
  
 
@@ -117,7 +121,7 @@ def app():
                     let marker;
 
                     function initMap() {{
-                        const defaultLocation = {{ lat: 51.505, lng: -0.09 }};
+                        const defaultLocation = {{ lat: 13.0215, lng: 74.7927 }};
                         map = new google.maps.Map(document.getElementById("map"), {{
                             center: defaultLocation,
                             zoom: 13,
@@ -349,9 +353,11 @@ def app():
 
             layout = QVBoxLayout()
 
-            
+            # Drone Connection Status
+            self.status_label = QLabel("Status: Disconnected")
+            layout.addWidget(self.status_label)
 
-            # Arm/Disarm Buttons
+              # Arm/Disarm Buttons
             arm_disarm_layout = QHBoxLayout()
             self.arm_button = QPushButton("Arm Drone")
             self.disarm_button = QPushButton("Disarm Drone")
@@ -361,36 +367,35 @@ def app():
             arm_disarm_layout.addWidget(self.disarm_button)
             layout.addLayout(arm_disarm_layout)
 
-            # Waypoint Input
-            waypoint_layout = QHBoxLayout()
-            waypoint_layout.addWidget(QLabel("Waypoint (lat, lon, alt):"))
-            self.waypoint_input = QLineEdit()
-            waypoint_layout.addWidget(self.waypoint_input)
-            self.send_waypoint_button = QPushButton("Send Waypoint")
-            self.send_waypoint_button.clicked.connect(self.on_send_waypoint_clicked)
-            waypoint_layout.addWidget(self.send_waypoint_button)
-            layout.addLayout(waypoint_layout)
+            # Server connect
+            connector = QHBoxLayout()
+            self.connect_server = QPushButton("Connect Server")
+            self.connect_server.clicked.connect(client.connect)
+            connector.addWidget(self.connect_server)
+            layout.addLayout(connector)
 
-            
-        
-             # Connect/Disconnect Buttons
-            connect_layout = QHBoxLayout()
-            self.connect_button = QPushButton("Connect to Drone")
-            self.disconnect_button = QPushButton("Disconnect from Drone")
-            self.connect_button.clicked.connect(self.)
-            self.disconnect_button.clicked.connect(self.on_disconnect_clicked)
-            connect_layout.addWidget(self.connect_button)
-            connect_layout.addWidget(self.disconnect_button)
-            layout.addLayout(connect_layout)   
+            # Dropdown layout
+            dropdown_layout = QHBoxLayout()
+            self.dropdown_label = QLabel("Select Operation:")
+            self.dropdown = QComboBox()
+            self.dropdown.addItems(["Waypoint Navigation", "Manual Control", "Return to Home"])
+            self.dropdown.currentIndexChanged.connect(self.on_dropdown_change)  # Event for selection change
+            dropdown_layout.addWidget(self.dropdown_label)
+            dropdown_layout.addWidget(self.dropdown)
+            layout.addLayout(dropdown_layout)
 
+            self.setLayout(layout)
         def on_arm_clicked(self):
             """Handles the arm button click."""
-            self.client.client.send("arm".encode('utf-8'))           
-            
+            self.client.send("arm".encode('utf-8'))           
+        def on_dropdown_change(self, index):
+            selected_option = self.dropdown.itemText(index)
+            print(f"Dropdown changed to: {selected_option}")
+            self.status_label.setText(f"Selected: {selected_option}")   
 
         def on_disarm_clicked(self):
             """Handles the disarm button click."""
-            self.client.send("disarm".encode("utf-8"))
+            client.send("disarm".encode("utf-8"))
 
 
         def on_send_waypoint_clicked(self):
@@ -470,14 +475,6 @@ def app():
             """Handle application exit to release resources."""
             self.stop_all_resources()
             super().closeEvent(event)
-
-
-
-
-
-
-
-
 
     def main():
         app = QApplication(sys.argv)
