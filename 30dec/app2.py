@@ -63,41 +63,44 @@ def app():
     class MarkerHandler(QObject):
         @pyqtSlot(float, float)
         def addMarker(self, lat: float, lon: float):
+            """Send the coordinates to JavaScript to update the marker position."""
             print(f"Marker added at latitude: {lat}, longitude: {lon}")
+            # Call JavaScript function to update the marker's position
+            self.update_marker_on_map(lat, lon)
 
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    model = torch.hub.load('ultralytics/yolov5', 'yolov5n', device=device)
-    if device == 'cuda':
-        model.half() 
+        def update_marker_on_map(self, lat, lon):
+            """Use JavaScript to update the marker on the map."""
+            # Execute the JavaScript function to move the marker
+            js_code = f"setMarker({lat}, {lon});"
+            # Send this code to the web page running in QWebEngineView
+            self.web_view.page().runJavaScript(js_code)
+
     class GPSCalibrationTab(QWidget):
         def __init__(self):
             super().__init__()
-            layout = QVBoxLayout()
+            
 
+            # Layout
+            self.layout = QVBoxLayout()
+            self.setLayout(self.layout)
+
+            # WebEngineView to display the map
             self.map_view = QWebEngineView()
+            self.layout.addWidget(self.map_view)
+
+            # WebChannel to communicate with JavaScript
             self.web_channel = QWebChannel()
             self.marker_handler = MarkerHandler()
             self.web_channel.registerObject("markerHandler", self.marker_handler)
             self.map_view.page().setWebChannel(self.web_channel)
 
+            # Initialize map with a placeholder HTML file
             self.map_view.setHtml(self.generate_google_map_html())
-            layout.addWidget(self.map_view)
 
-            coord_layout = QHBoxLayout()
-            coord_layout.addWidget(QLabel("Enter GPS Coordinates:"))
-            self.coordinate_input = QLineEdit()
-            coord_layout.addWidget(self.coordinate_input)
-
-            self.set_marker_button = QPushButton("Set Marker")
-            self.set_marker_button.clicked.connect(self.set_marker)
-            coord_layout.addWidget(self.set_marker_button)
-
-            layout.addLayout(coord_layout)
-
-            self.status_label = QLabel("Status: Ready")
-            layout.addWidget(self.status_label)
-
-            self.setLayout(layout)
+            # Timer for dynamic updates
+            self.update_timer = QTimer()
+            self.update_timer.timeout.connect(self.update_marker)
+            self.update_timer.start(1000)  # Update every 1 second
 
         def generate_google_map_html(self):
             return f"""
@@ -112,7 +115,7 @@ def app():
                     }}
                 </style>
                 <script 
-                    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCLGirrq1bnCqF6HBOoEJXbDS0_tX_Yjls&callback=initMap" 
+                    src="https://maps.googleapis.com/maps/api/js?key=YOUR_API_KEY&callback=initMap" 
                     async defer>
                 </script>
                 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
@@ -135,8 +138,6 @@ def app():
                     }}
 
                     function setMarker(lat, lon) {{
-                        console.log('Setting marker at:', lat, lon);
-
                         if (marker) {{
                             marker.setMap(null);
                         }}
@@ -165,72 +166,21 @@ def app():
                 <div id="map"></div>
             </body>
             </html>
-            """ 
+            """
 
-        def set_marker(self):
-            coordinates = self.coordinate_input.text()
-            try:
-                lat, lon = map(float, coordinates.split(","))
-                self.map_view.page().runJavaScript(f"setMarker({lat}, {lon});")
-                self.status_label.setText(f"Status: Marker set at {lat}, {lon}")
-            except ValueError:
-                self.status_label.setText("Status: Invalid coordinates! Use 'latitude,longitude' format.")
-    class MapMonitoringTab(QWidget):
-        def __init__(self, drone):
-            super().__init__()
-            self.drone = drone
+        def update_marker(self):
+            """Fetch the drone's current GPS coordinates and send to JavaScript to update the map marker."""
+            # try:
+            #     if self.drone:
+            #         # Fetch current GPS coordinates from the drone
+            #         lat, lon = self.drone.get_gps_coordinates()
+            #         # Use JavaScript to update the marker
+            #         self.marker_handler.addMarker(lat, lon)
+            # except Exception as e:
+            #     print(f"Error updating map: {e}")
+            pass
+        
 
-            # Layout
-            self.layout = QVBoxLayout()
-            self.setLayout(self.layout)
-
-            # WebEngineView to display the map
-            self.map_view = QWebEngineView()
-            self.layout.addWidget(self.map_view)
-
-            # Initialize map
-            self.init_map()
-
-            # Timer for dynamic updates
-            self.update_timer = QTimer()
-            self.update_timer.timeout.connect(self.update_map)
-            self.update_timer.start(1000)  # Update every 1 second
-
-        def init_map(self):
-            """Initialize the map with a default location."""
-            # Default location (latitude, longitude)
-            self.current_location = (0.0, 0.0)
-            self.map = folium.Map(location=self.current_location, zoom_start=15)
-
-            # Save the map to an HTML file
-            self.map_file = "map.html"
-            self.save_map()
-
-            # Load the map into the view
-            self.map_view.setUrl(QUrl.fromLocalFile(self.map_file))
-
-        def save_map(self):
-            """Save the map to an HTML file."""
-            folium.Marker(self.current_location, popup="Drone Location").add_to(self.map)
-            self.map.save(self.map_file)
-
-        def update_map(self):
-            """Update the map with the drone's current GPS position."""
-            try:
-                if self.drone:
-                    # Fetch current GPS coordinates from the drone
-                    lat, lon = self.drone.get_gps_coordinates()
-                    self.current_location = (lat, lon)
-
-                    # Update the map
-                    self.map = folium.Map(location=self.current_location, zoom_start=15)
-                    folium.Marker(self.current_location, popup="Drone Location").add_to(self.map)
-
-                    # Save and reload the map
-                    self.save_map()
-                    self.map_view.setUrl(QUrl.fromLocalFile(self.map_file))
-            except Exception as e:
-                print(f"Error updating map: {e}")
 
 
 
