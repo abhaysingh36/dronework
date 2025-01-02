@@ -67,14 +67,14 @@ def app():
         def __init__(self, web_view):
             super().__init__()
             self.web_view = web_view
-    
+            self.markers = []  # Store all markers
+
         @pyqtSlot(float, float)
         def addMarker(self, lat: float, lon: float):
             """Send the coordinates to JavaScript to update the marker position."""
             print(f"Marker added at latitude: {lat}, longitude: {lon}")
-            # Call JavaScript function to update the marker's position
             self.update_marker_on_map(lat, lon)
-    
+
         def update_marker_on_map(self, lat, lon):
             """Use JavaScript to update the marker on the map."""
             # Execute the JavaScript function to move the marker
@@ -82,6 +82,8 @@ def app():
             # Send this code to the web page running in QWebEngineView
             self.web_view.page().runJavaScript(js_code)
 
+            # Store the marker information (lat, lon) in the markers list
+            self.markers.append((lat, lon))  # Add the new marker
     class GPSCalibrationTab(QWidget):
         def __init__(self):
             super().__init__()
@@ -110,35 +112,38 @@ def app():
             self.update_timer = QTimer()
             self.update_timer.timeout.connect(self.update_marker)
             self.update_timer.start(1000)  # Update every 1 second
-
         def generate_google_map_html(self):
-            return f"""
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <style>
-                    html, body, #map {{
-                        height: 100%;
-                        margin: 0;
-                        padding: 0;
-                    }}
-                </style>
-                <script 
-                    src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCLGirrq1bnCqF6HBOoEJXbDS0_tX_Yjls&callback=initMap"
-                    async defer>
-                </script>
-                <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
-                <script>
+                return f"""
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <style>
+                        html, body, #map {{
+                            height: 100%;
+                            margin: 0;
+                            padding: 0;
+                        }}
+                    </style>
+                    <script 
+                        src="https://maps.googleapis.com/maps/api/js?key=AIzaSyCLGirrq1bnCqF6HBOoEJXbDS0_tX_Yjls&callback=initMap"
+                        async defer>
+                    </script>
+                    <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+                    <script>
                     let map;
-                    let marker;
-        
+                    let markers = [];  // Array to store multiple markers
+
                     function initMap() {{
-                        const defaultLocation = {{ lat: 13.0215, lng: 74.7927 }};
+                        const defaultLocation = {{ lat: 13.0215, lng: 74.7927 }};  // JavaScript syntax inside the string
                         map = new google.maps.Map(document.getElementById("map"), {{
                             center: defaultLocation,
-                            zoom: 13,
+                            zoom: 7,  // Start with zoom level 15 for initial zoom effect
+                            disableDefaultUI: true,  // Enable user interaction for zooming out/in
+                            zoomControl: true,  // Enable zoom control
+                            scrollwheel: true,  // Enable zooming with mouse wheel
+                            streetViewControl: true, // Optional: Enable street view control if desired
                         }});
-        
+
                         // Listen for map clicks and send coordinates to Python
                         map.addListener("click", (event) => {{
                             const lat = event.latLng.lat();
@@ -148,51 +153,52 @@ def app():
                             }}
                             setMarker(lat, lon);  // Set a red marker at the clicked location
                         }});
+
+                        // Optional: Add a marker at the default location on map load
+                        setMarker(defaultLocation.lat, defaultLocation.lng);
                     }}
-        
+
                     function setMarker(lat, lon) {{
-                        if (marker) {{
-                            marker.setMap(null);  // Remove previous marker
-                        }}
-        
+                        // Create a new marker and add it to the array
                         const location = {{ lat: lat, lng: lon }};
-                        marker = new google.maps.Marker({{
+                        const newMarker = new google.maps.Marker({{
                             position: location,
                             map: map,
                             icon: {{
                                 url: "http://maps.google.com/mapfiles/ms/icons/red-dot.png"
                             }}
                         }});
-        
-                        map.panTo(location);  // Center the map on the new marker
-                        map.setZoom(15);      // Zoom in when placing the marker
+
+                        markers.push(newMarker);  // Store the new marker in the markers array
+
+                        // Optionally, adjust map view to show all markers
+                        const bounds = new google.maps.LatLngBounds();
+                        markers.forEach(marker => bounds.extend(marker.getPosition()));
+                        map.fitBounds(bounds);  // Zoom out to fit all markers on the map
                     }}
-        
+
                     window.onload = function() {{
                         new QWebChannel(qt.webChannelTransport, function(channel) {{
                             window.markerHandler = channel.objects.markerHandler;
                         }});
                     }};
-                </script>
-            </head>
-            <body>
-                <div id="map"></div>
-            </body>
-            </html>
-            """
-        
-        
+                    </script>
+                </head>
+                <body>
+                    <div id="map"></div>
+                </body>
+                </html>
+                """
+
+
         def update_marker(self):
             """Fetch the drone's current GPS coordinates and send to JavaScript to update the map marker."""
-            # try:
-            #     if self.drone:
-            #         # Fetch current GPS coordinates from the drone
-            #         lat, lon = self.drone.get_gps_coordinates()
-            #         # Use JavaScript to update the marker
-            #         self.marker_handler.addMarker(lat, lon)
-            # except Exception as e:
-            #     print(f"Error updating map: {e}")
-            pass
+            # Fetch coordinates (mocked here for testing purposes)
+            lat, lon = 13.0220, 74.7928  # Example coordinates (you can replace these with real data)
+        
+            # Send the coordinates to JavaScript to update the marker
+            js_code = f"setMarker({lat}, {lon});"  # JavaScript code to set the marker at the new location
+            self.map_view.page().runJavaScript(js_code)  # Execute the JavaScript on the web page
         
 
 
