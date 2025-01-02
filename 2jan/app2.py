@@ -17,6 +17,11 @@ from PyQt6.QtCore import QTimer
 import socket
 import multiprocessing
 import time 
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+model = torch.hub.load('ultralytics/yolov5', 'yolov5n', device=device)
+if device == 'cuda':
+    model.half() 
+
 client = None
 # Function to handle communication with the server
 class Client:
@@ -256,7 +261,7 @@ def app():
             super().__init__()
             self.label = label
             self.running = True
-            self.cap = cv2.VideoCapture("http://127.0.0.1:5000/video_feed")  # Flask feed URL
+            self.cap = cv2.VideoCapture("http://192.0.0.2:5000/video_feed")  # Flask feed URL
 
             # Check if the webcam feed is opened correctly
             if not self.cap.isOpened():
