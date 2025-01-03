@@ -3,6 +3,54 @@ import socket
 import threading
 import multiprocessing
 from pymavlink import mavutil
+import cv2
+import torch
+device = 'cuda' if torch.cuda.is_available() else 'cpu'
+model = torch.hub.load('ultralytics/yolov5', 'yolov5n', device=device)
+if device == 'cuda':
+    model.half() 
+    
+class ObjectDetection():
+    def __init__(self, label):
+        super().__init__()
+        self.label = label
+        self.running = True
+        self.cap = cv2.VideoCapture("http://127.0.0.1:5000/video_feed")  # Flask feed URL
+        # Check if the webcam feed is opened correctly
+        if not self.cap.isOpened():
+            print("Error: Could not open webcam feed.")
+            self.running = False
+        self.frame_count = 0  # To control frame processing rate
+    def run(self):
+        while self.running:
+            ret, frame = self.cap.read()
+            # If the frame is not grabbed, break the loop
+            if not ret:
+                print("Error: Failed to capture image.")
+                break
+            self.frame_count += 1
+            # Process every 2nd frame to reduce load
+            if self.frame_count % 2 == 0:
+                # Resize the frame to a smaller resolution before inference (optional)
+                new_width = 640  # Set your desired width
+                new_height = 480  # Set your desired height
+                resized_frame = cv2.resize(frame, (new_width, new_height))
+                # Perform inference on the resized frame
+                results = model(resized_frame)
+                # Render the results on the frame (draw bounding boxes)
+                frame_with_boxes = results.render()[0]
+                # Convert frame with boxes to QImage for displaying
+            
+            # Optional: Control the rate at which frames are processed
+            # This will help ensure the thread doesn't process too many frames per second
+            cv2.waitKey(1)  # 1 ms delay to let the system process other events (helpful in threading)
+    def stop(self):
+        """Stop the thread"""
+        self.running = False
+        self.cap.release()  # Release the video capture object
+
+
+
 
 class PixhawkConnection:
     def __init__(self, connection_string="/dev/ttyACM0", baud_rate=57600):
@@ -59,10 +107,11 @@ class PixhawkConnection:
             self.connection.mav.command_long_send(
                 self.connection.target_system,  # Target system ID
                 self.connection.target_component,  # Target component ID
-                mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,  # Command to arm/disarm
-                1,  # Confirmation (0 means no confirmation)
-                1,  # 1 to arm, 0 to disarm
-                0, 0, 0, 0, 0, 0  # Other parameters (not used here)
+                mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+                0,
+                1,
+                0,0,0,0,0,0                
+                # Other parameters (not used here)
             )
             print("Arm command sent!")
             self.is_armed()
@@ -86,7 +135,7 @@ class PixhawkConnection:
         """Check if the drone is armed by reading the SYS_STATUS message."""
         if self.connection:
             print(".............here...")
-            msg = self.connection.recv_match(type='SYS_STATUS', blocking=False)
+            msg = self.connection.recv_match(type='COMMAND_LONG', blocking=False)
             print(msg)
             print()
             if msg:
@@ -211,6 +260,7 @@ def main():
     pixhawk_conn.connect()
     pixhawk_conn.request_data_stream()
 
+# self.connection.mav.command_long_send(
     # Create server process
     server_instance = Server(pixhawk_conn)
     server_process = multiprocessing.Process(target=server_instance.start_server)
@@ -229,3 +279,11 @@ def main():
 
 if __name__ == "__main__":
     main()
+# self.connection.mav.command_long_send(
+#                 self.connection.target_system,
+#                 self.connection.target_component,
+#                 mavutil.mavlink.MAV_CMD_COMPONENT_ARM_DISARM,
+#                 1,
+#                 1,  # 0 to disarm, 1 to arm
+#                 0, 0, 0, 0, 0, 0
+#             )

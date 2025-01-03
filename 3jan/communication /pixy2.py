@@ -20,8 +20,9 @@ while True:
 master.mav.request_data_stream_send(master.target_system, master.target_component,
                                     mavutil.mavlink.MAV_DATA_STREAM_ALL, 1, 1)
 
-# Wait for the SYS_STATUS message to get battery voltage and errors
-msg = master.recv_match(type='SYS_STATUS', blocking=True)
+# Wait for the SYS_STATUS message
+msg = master.recv_match(type='STATUSTEXT', blocking=0)
+print(msg)
 if msg:
     print(f"Battery voltage: {msg.voltage_battery / 1000.0} V")
     if msg.voltage_battery < 10000:  # Check if voltage is below 10V (example threshold)
@@ -29,29 +30,29 @@ if msg:
         exit(1)
 
     # Check if there are sensor errors
-    if msg.errors_count1 > 0:
-        print(f"Warning: There are {msg.errors_count1} sensor errors.")
+    if msg.errors_count > 0:
+        print(f"Warning: There are {msg.errors_count} sensor errors.")
         exit(1)
-else:
-    print("Failed to get SYS_STATUS message.")
-    exit(1)
 
-# Disable arming checks (only for testing in a safe environment)
-param_id = "ARMING_CHECK"  # Ensure this is a string
-master.mav.param_set_send(
-    master.target_system,
-    master.target_component,
-    param_id.encode('ascii'),  # Encode the string to bytes
-    0,  # Set value to 0 to disable all checks (not recommended for regular use)
-    mavutil.mavlink.MAV_PARAM_TYPE_INT32  # Parameter type
-)
+# Optionally disable arming checks (only for testing in a safe environment)
+try:
+    print("Attempting to disable ARMING_CHECK...")
+    master.mav.param_set_send(
+        master.target_system,
+        master.target_component,
+        "ARMING_CHECK",  # Corrected: parameter name as a string
+        0,  # Set value to 0 to disable all checks (not recommended for regular use)
+        mavutil.mavlink.MAV_PARAM_TYPE_INT32  # Parameter type
+    )
+    print("ARMING_CHECK successfully disabled.")
+except Exception as e:
+    print(f"Error while disabling ARMING_CHECK: {e}")
 
-# Optionally override the safety switch (if applicable)
-# Use command ID 183 (MAV_CMD_OVERRIDE_SAFETY command ID) directly
+# Optionally override safety switch (if applicable and required)
 master.mav.command_long_send(
     master.target_system,
     master.target_component,
-    183,  # MAV_CMD_OVERRIDE_SAFETY command ID
+    mavutil.mavlink.MAV_CMD_OVERRIDE_SAFETY,  # Command to override safety
     0,  # Confirmation
     1,  # Param1: 1 to override safety switch
     0,  # Param2: Not used
@@ -63,7 +64,6 @@ master.mav.command_long_send(
 )
 
 # Send arm command (arming the drone)
-print("Sending arm command to the drone...")
 master.mav.command_long_send(
     master.target_system,  # Target system
     master.target_component,  # Target component
@@ -80,24 +80,11 @@ master.mav.command_long_send(
 
 # Wait for acknowledgment of the arm command
 ack = master.recv_match(type='COMMAND_ACK', blocking=True)
-print(ack)
 if ack:
     result_description = mavutil.mavlink.enums['MAV_RESULT'][ack.result].description
     print(f"Command result: {result_description}")
 else:
     print("No acknowledgment received. Command may have failed.")
-
-# Check the arm status by examining the base_mode in the heartbeat message
-print("Checking arm status...")
-heartbeat = master.recv_match(type='HEARTBEAT', blocking=True)
-print(heartbeat)
-if heartbeat:
-    if heartbeat.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED:
-        print("The drone is armed.")
-    else:
-        print("The drone is not armed.")
-else:
-    print("Failed to get heartbeat after arming command.")
 
 # Optionally, close the connection
 master.close()

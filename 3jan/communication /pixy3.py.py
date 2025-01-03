@@ -1,5 +1,6 @@
 from pymavlink import mavutil
 import time
+from collections.abc import MutableMapping
 
 # Connect to the Pixhawk (replace '/dev/ttyACM0' with your actual port)
 master = mavutil.mavlink_connection('/dev/ttyACM0', baud=57600)  # Set the correct serial port
@@ -20,7 +21,7 @@ while True:
 master.mav.request_data_stream_send(master.target_system, master.target_component,
                                     mavutil.mavlink.MAV_DATA_STREAM_ALL, 1, 1)
 
-# Wait for the SYS_STATUS message to get battery voltage and errors
+# Wait for the SYS_STATUS message
 msg = master.recv_match(type='SYS_STATUS', blocking=True)
 if msg:
     print(f"Battery voltage: {msg.voltage_battery / 1000.0} V")
@@ -36,7 +37,7 @@ else:
     print("Failed to get SYS_STATUS message.")
     exit(1)
 
-# Disable arming checks (only for testing in a safe environment)
+# Optionally disable arming checks (only for testing in a safe environment)
 param_id = "ARMING_CHECK"  # Ensure this is a string
 master.mav.param_set_send(
     master.target_system,
@@ -46,7 +47,7 @@ master.mav.param_set_send(
     mavutil.mavlink.MAV_PARAM_TYPE_INT32  # Parameter type
 )
 
-# Optionally override the safety switch (if applicable)
+# Optionally override safety switch (if applicable and required)
 # Use command ID 183 (MAV_CMD_OVERRIDE_SAFETY command ID) directly
 master.mav.command_long_send(
     master.target_system,
@@ -54,6 +55,22 @@ master.mav.command_long_send(
     183,  # MAV_CMD_OVERRIDE_SAFETY command ID
     0,  # Confirmation
     1,  # Param1: 1 to override safety switch
+    0,  # Param2: Not used
+    0,  # Param3: Not used
+    0,  # Param4: Not used
+    0,  # Param5: Not used
+    0,  # Param6: Not used
+    0   # Param7: Not used
+)
+
+# Set mode to GUIDED (numerical value: 4) to allow waypoint control
+# MAV_MODE_GUIDED is the mode that allows the drone to follow waypoints and commands
+master.mav.command_long_send(
+    master.target_system,
+    master.target_component,
+    mavutil.mavlink.MAV_CMD_DO_SET_MODE,  # Command to change mode
+    0,  # Confirmation
+    4,  # Param1: Mode 4 corresponds to GUIDED mode (Manual: 0, Stabilize: 0, Guided: 4, etc.)
     0,  # Param2: Not used
     0,  # Param3: Not used
     0,  # Param4: Not used
@@ -80,19 +97,17 @@ master.mav.command_long_send(
 
 # Wait for acknowledgment of the arm command
 ack = master.recv_match(type='COMMAND_ACK', blocking=True)
-print(ack)
 if ack:
     result_description = mavutil.mavlink.enums['MAV_RESULT'][ack.result].description
     print(f"Command result: {result_description}")
 else:
     print("No acknowledgment received. Command may have failed.")
 
-# Check the arm status by examining the base_mode in the heartbeat message
-print("Checking arm status...")
-heartbeat = master.recv_match(type='HEARTBEAT', blocking=True)
-print(heartbeat)
-if heartbeat:
-    if heartbeat.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED:
+# Check arm status after sending the arming command
+arm_status = master.recv_match(type='HEARTBEAT', blocking=True)  # Check for heartbeat to verify if the drone is armed
+if arm_status:
+    print(arm_status)
+    if arm_status.base_mode & mavutil.mavlink.MAV_MODE_FLAG_SAFETY_ARMED:
         print("The drone is armed.")
     else:
         print("The drone is not armed.")
