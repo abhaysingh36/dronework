@@ -240,7 +240,8 @@ def app():
 
         def start_feed(self):
             """Start the video feed with object detection"""
-            self.video_thread = ObjectDetection(self.video_label)
+            stream_url = "http://127.0.0.1:5000/video_feed"
+            self.video_thread = ObjectDetection(self.video_label,stream_url)
             self.video_thread.start()
 
             self.start_feed_button.setEnabled(False)
@@ -256,16 +257,18 @@ def app():
             self.stop_feed_button.setEnabled(False)
 
 
+  
     class ObjectDetection(QThread):
-        def __init__(self, label):
+        def __init__(self, label, stream_url):
             super().__init__()
             self.label = label
             self.running = True
-            self.cap = cv2.VideoCapture("http://192.0.0.2:5000/video_feed")  # Flask feed URL
+            self.stream_url = stream_url  # Pass the stream URL as a parameter
+            self.cap = cv2.VideoCapture(self.stream_url)  # Use the provided stream URL
 
-            # Check if the webcam feed is opened correctly
+            # Check if the stream is opened correctly
             if not self.cap.isOpened():
-                print("Error: Could not open webcam feed.")
+                print("Error: Could not open video feed.")
                 self.running = False
 
             self.frame_count = 0  # To control frame processing rate
@@ -275,13 +278,13 @@ def app():
                 ret, frame = self.cap.read()
 
                 # If the frame is not grabbed, break the loop
-                if not ret:   
+                if not ret:
                     print("Error: Failed to capture image.")
                     break
 
                 self.frame_count += 1
 
-                # Process every 2nd frame to reduce load
+                # Process every 2nd frame to reduce load (optional)
                 if self.frame_count % 2 == 0:
                     # Resize the frame to a smaller resolution before inference (optional)
                     new_width = 640  # Set your desired width
@@ -304,8 +307,7 @@ def app():
                     self.label.setPixmap(pixmap)
 
                 # Optional: Control the rate at which frames are processed
-                # This will help ensure the thread doesn't process too many frames per second
-                cv2.waitKey(1)  # 1 ms delay to let the system process other events (helpful in threading)
+                cv2.waitKey(1)  # 1 ms delay to let the system process other events
 
         def stop(self):
             """Stop the thread"""
