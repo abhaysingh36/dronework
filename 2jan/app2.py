@@ -275,7 +275,7 @@ def app():
                 ret, frame = self.cap.read()
 
                 # If the frame is not grabbed, break the loop
-                if not ret:
+                if not ret:   
                     print("Error: Failed to capture image.")
                     break
 
