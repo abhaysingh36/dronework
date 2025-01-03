@@ -17,10 +17,10 @@ from PyQt6.QtCore import QTimer
 import socket
 import multiprocessing
 import time 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-model = torch.hub.load('ultralytics/yolov5', 'yolov5n', device=device)
-if device == 'cuda':
-    model.half() 
+# device = 'cuda' if torch.cuda.is_available() else 'cpu'
+# model = torch.hub.load('ultralytics/yolov5', 'yolov5n', device=device)
+# if device == 'cuda':
+#     model.half() 
 
 client = None
 # Function to handle communication with the server
@@ -265,6 +265,12 @@ def app():
             self.running = True
             self.stream_url = stream_url  # Pass the stream URL as a parameter
             self.cap = cv2.VideoCapture(self.stream_url)  # Use the provided stream URL
+            self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            self.model = torch.hub.load('ultralytics/yolov5', 'yolov5n', device=self.device)
+            if self.device == 'cuda':
+                self.model.half()
+        
+            self.frame_count = 0  # To control frame processing rate
 
             # Check if the stream is opened correctly
             if not self.cap.isOpened():
@@ -292,7 +298,7 @@ def app():
                     resized_frame = cv2.resize(frame, (new_width, new_height))
 
                     # Perform inference on the resized frame
-                    results = model(resized_frame)
+                    results = self.model(resized_frame)
 
                     # Render the results on the frame (draw bounding boxes)
                     frame_with_boxes = results.render()[0]
