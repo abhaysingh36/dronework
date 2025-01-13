@@ -329,9 +329,11 @@ def app():
     
             # Main layout
             main_layout = QVBoxLayout()
+            main_layout.setContentsMargins(10, 10, 10, 10)  # Reduce margins for compactness
     
             # Status Group
             status_group = QGroupBox("Connection Status")
+            status_group.setFlat(True)  # Make it look cleaner
             status_layout = QVBoxLayout()
             self.status_label = QLabel("Status: Disconnected")
             status_layout.addWidget(self.status_label)
@@ -340,67 +342,68 @@ def app():
     
             # Server Connect Group
             server_group = QGroupBox("Server Connection")
+            server_group.setFlat(True)  # Clean border for server connection section
             server_layout = QVBoxLayout()
             self.connect_server = QPushButton("Connect Server")
-
+            self.connect_server.setFixedSize(150, 40)  # Fix button size for uniformity
+    
             # Connect the button's click event to the connect_to_server function
             self.connect_server.clicked.connect(self.connect_to_server)
-
             server_layout.addWidget(self.connect_server)
             server_group.setLayout(server_layout)
             main_layout.addWidget(server_group)
     
             # Drone Control Group   
             control_group = QGroupBox("Drone Control")
+            control_group.setFlat(True)  # Clean border for control section
             control_layout = QVBoxLayout()
+            
+            # Arm/Disarm Buttons
+            arm_disarm_layout = QHBoxLayout()
+            self.arm_button = QPushButton("Arm Drone")
+            self.disarm_button = QPushButton("Disarm Drone")
+            
+            # Set uniform button sizes
+            self.arm_button.setFixedSize(120, 40)
+            self.disarm_button.setFixedSize(120, 40)
     
-            # Dropdown for Drone Control
-            drone_control_layout = QHBoxLayout()
-            self.drone_control_label = QLabel("Select Control:")
-            self.drone_control_dropdown = QComboBox()
-            self.drone_control_dropdown.addItems(["Arm Drone", "Disarm Drone"])
-            self.drone_control_dropdown.currentIndexChanged.connect(self.on_drone_control_change)
-            drone_control_layout.addWidget(self.drone_control_label)
-            drone_control_layout.addWidget(self.drone_control_dropdown)
+            self.arm_button.clicked.connect(self.on_arm_clicked)
+            self.disarm_button.clicked.connect(self.on_disarm_clicked)
     
-            control_layout.addLayout(drone_control_layout)
+            # Add buttons directly to the layout without unnecessary spacer
+            arm_disarm_layout.addWidget(self.arm_button)
+            arm_disarm_layout.addWidget(self.disarm_button)
+    
+            # Align buttons to the center
+            arm_disarm_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    
+            control_layout.addLayout(arm_disarm_layout)
+    
             control_group.setLayout(control_layout)
             main_layout.addWidget(control_group)
     
-            # Add spacing for aesthetics
-            main_layout.addSpacerItem(QSpacerItem(20, 40, QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding))
-    
-            # Set main layout
+            # Set the main layout for the widget
             self.setLayout(main_layout)
     
         def on_arm_clicked(self):
             """Handles the arm button click."""
-            self.client.send("arm".encode("utf-8"))
-            self.status_label.setText("Status: Drone Armed")
+            self.client.send("arm".encode('utf-8'))  # Send arm command
     
         def on_disarm_clicked(self):
             """Handles the disarm button click."""
-            self.client.send("disarm".encode("utf-8"))
-            self.status_label.setText("Status: Drone Disarmed")
+            self.client.send("disarm".encode("utf-8"))  # Send disarm command
     
-        def on_drone_control_change(self, index):
-            """Handles the drone control dropdown change."""
-            selected_option = self.drone_control_dropdown.itemText(index)
-            if selected_option == "Arm Drone":
-                self.on_arm_clicked()
-            elif selected_option == "Disarm Drone":
-                self.on_disarm_clicked()
         def connect_to_server(self):
             """Try to connect to the server and update the status."""
             if self.client.connect():
                 self.update_status("Status: Connected")
             else:
                 self.update_status("Status: Failed to Connect")
+    
         def update_status(self, status_text):
             """Update the status label with the provided text."""
             self.status_label.setText(status_text)
-        
-
+    
 
 
     class MainWindow(QMainWindow):
