@@ -1,11 +1,13 @@
 #include <Wire.h>
-#include <MPU6050.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
 #include <Servo.h>
 #include <SoftwareSerial.h>
 
 // MPU6050 object
-MPU6050 mpu;
+Adafruit_MPU6050 mpu;
 float gyroYaw, accelYaw;
+sensors_event_t accelEvent, gyroEvent;
 float yawAngle = 0;  // Estimated yaw angle
 float alpha = 0.98;   // Filter constant (between 0 and 1)
 bool throttleSafe = true;  // Global variable to track throttle safety
@@ -14,15 +16,17 @@ float deltaTime = 0.01;  // Example value for time step in seconds
 float Q_angle = 0.001;  // Process noise covariance for angle
 float R_angle = 0.005;  // Measurement noise covariance for angle
 float yawRate = 0;  // Initialize yawRate
-float rollMaxIntegral = 500.0;  // Example value for max roll integral
-float pitchMaxIntegral = 500.0; // Example value for max pitch integral
+float rollMaxIntegral = 500.0;  // Max roll integral
+float pitchMaxIntegral = 500.0; // Max pitch integral
 float Q_gyro = 0.003;  // Gyro process noise covariance
 unsigned long lastTime = 0;  // To store the last time for deltaTime calculation
 float yawIntegral = 0.0;  // Define yawIntegral
 const float ANGULAR_VELOCITY_THRESHOLD = 10.0;  // Rad/s (Adjust based on your system)
-const float ACCELEROMETER_NOISE_THRESHOLD = 2.0; 
-
-
+const float ACCELEROMETER_NOISE_THRESHOLD = 2.0;
+float yawMaxIntegral = 1000.0; // Set an appropriate value based on your system
+float ax, ay, az;
+float lastYawError = 0.0; // Initialize with an appropriate value
+float accelVariance = sqrt(ax * ax + ay * ay); 
 
 // ESCs for motors
 Servo esc1, esc2, esc3, esc4;
@@ -46,6 +50,14 @@ float rollHistory[10] = {0}, pitchHistory[10] = {0};  // Initialize arrays
 int rollIndex = 0, pitchIndex = 0;
 
 int lastThrottle[4] = {1500, 1500, 1500, 1500};  // Store last throttle values
+float average(float history[], int size) {
+  float sum = 0;
+  for (int i = 0; i < size; i++) {
+    sum += history[i];
+  }
+  return sum / size;
+}
+
 
 class ESCCalibration {
 public:
@@ -65,11 +77,9 @@ void setup() {
   piSerial.begin(9600);
   Wire.begin();
 
-  mpu.initialize();
-  if (mpu.testConnection()) {
-    Serial.println("MPU6050 connected successfully.");
-  } else {
-    Serial.println("MPU6050 connection failed.");
+  if (!mpu.begin()) {
+    Serial.println("Failed to initialize MPU6050");
+    while (1);
   }
 
   esc1.attach(escPins[0]);
@@ -85,48 +95,43 @@ void loop() {
   readMPU6050Data();
   stabilizeDrone();
 
-  if (Serial.available() > 0) {
+  // Process serial input from both Serial and piSerial
+  processSerialInput(Serial);
+  processSerialInput(piSerial);
+}
+
+void processSerialInput(SoftwareSerial& serial) {
+  if (serial.available() > 0) {
     char inputBuffer[32];
-    Serial.readBytesUntil('\n', inputBuffer, sizeof(inputBuffer));
-    inputBuffer[31] = '\0';
-    handleSerialCommand(String(inputBuffer));
-  }
-  if (piSerial.available() > 0) {
-    char inputBuffer[32];
-    piSerial.readBytesUntil('\n', inputBuffer, sizeof(inputBuffer));
-    inputBuffer[31] = '\0';
-    Serial.println(inputBuffer);
+    serial.readBytesUntil('\n', inputBuffer, sizeof(inputBuffer));
+    inputBuffer[31] = '\0';  // Null-terminate the input
     handleSerialCommand(String(inputBuffer));
   }
 }
 
 
 void adjustKalmanFilterParameters() {
-    // Read the gyroscope rate in degrees/s (converted from rad/s)
-    float gyroRate = yawRate;  // Assuming yawRate is in degrees per second
+  // Read the gyroscope rate in degrees/s (converted from rad/s)
+  float gyroRate = yawRate;  // Assuming yawRate is in degrees per second
 
-    // Dynamically adjust Q_angle based on the gyro rate
-    if (abs(gyroRate) > ANGULAR_VELOCITY_THRESHOLD) {
-        // Increase Q_angle when the system is rotating rapidly
-        Q_angle = 0.01;  // You can adjust this value based on experiments
-    } else {
-        // Decrease Q_angle when the system is relatively stationary
-        Q_angle = 0.001;  // You can adjust this value based on experiments
-    }
+  // Dynamically adjust Q_angle based on the gyro rate
+  if (abs(gyroRate) > ANGULAR_VELOCITY_THRESHOLD) {
+    Q_angle = 0.01;  // Increase when system rotates rapidly
+  } else {
+    Q_angle = 0.001;  // Decrease when stationary
+  }
 
-    // Calculate the accelerometer noise variance based on its standard deviation
-    float accelVariance = sqrt(ax * ax + ay * ay);  // Simplified calculation for variance
-    if (accelVariance > ACCELEROMETER_NOISE_THRESHOLD) {
-        // Increase R_angle when accelerometer data is noisy
-        R_angle = 0.01;  // Adjust this based on your system's needs
-    } else {
-        // Decrease R_angle when accelerometer data is stable
-        R_angle = 0.005;  // Adjust this based on your system's needs
-    }
+  // Calculate accelerometer variance for noise
+  float accelVariance = sqrt(ax * ax + ay * ay);
+  if (accelVariance > ACCELEROMETER_NOISE_THRESHOLD) {
+    R_angle = 0.01;  // Increase R_angle for noisy data
+  } else {
+    R_angle = 0.005;  // Stable accelerometer data
+  }
 
-    // Log the adjusted parameters for debugging purposes
-    Serial.print("Q_angle: "); Serial.print(Q_angle);
-    Serial.print(", R_angle: "); Serial.println(R_angle);
+  // Debugging output
+  Serial.print("Q_angle: "); Serial.print(Q_angle);
+  Serial.print(", R_angle: "); Serial.println(R_angle);
 }
 
 bool checkThrottleSafe() {
@@ -139,7 +144,6 @@ bool checkThrottleSafe() {
   throttleSafe = true;
   return true;
 }
-
 
 void calibrateESCsIfSafe() {
   if (checkThrottleSafe()) {
@@ -158,69 +162,43 @@ void killSwitch() {
   piSerial.println("Emergency kill switch activated! Motors stopped.");
 }
 
-
-
 void readMPU6050Data() {
-    int16_t ax, ay, az, gx, gy, gz;
-    mpu.getMotion6(&ax, &ay, &az, &gx, &gy, &gz);
-
-    // Convert gyro data to degrees per second (assuming ±250°/s range)
-    float gyroRate = gz / 131.0;
-
-    // Calculate accelerometer yaw angle
-    float accelYaw = atan2(ay, ax) * 180 / PI;
-
-    // Kalman filter prediction step
-    yawAngle += gyroRate * deltaTime;
-    P[0][0] += deltaTime * (P[1][1] - P[0][1] - P[1][0] + Q_angle);
-    P[0][1] -= deltaTime * P[1][1];
-    P[1][0] -= deltaTime * P[1][1];
-    P[1][1] += Q_gyro * deltaTime;
-
-    // Kalman filter update step
-    float S = P[0][0] + R_angle;  // Innovation covariance
-    float K_0 = P[0][0] / S;
-    float K_1 = P[1][0] / S;
-    float y = accelYaw - yawAngle;  // Innovation (difference between measurement and prediction)
-    yawAngle += K_0 * y;
-    yawRate += K_1 * y;
-
-    // Update error covariance
-    float P00_temp = P[0][0];
-    float P01_temp = P[0][1];
-    P[0][0] -= K_0 * P00_temp;
-    P[0][1] -= K_0 * P01_temp;
-    P[1][0] -= K_1 * P00_temp;
-    P[1][1] -= K_1 * P01_temp;
-}
+  sensors_event_t accelEvent, gyroEvent;
+  mpu.getEvent(&accelEvent, &gyroEvent, NULL);
 
 
+  float gyroRate = gyroEvent.gyro.z / 131.0;
+  float accelYaw = atan2(accelEvent.acceleration.y, accelEvent.acceleration.x) * 180 / PI;
 
+  // Kalman filter prediction step
+  yawAngle += gyroRate * deltaTime;
+  P[0][0] += deltaTime * (P[1][1] - P[0][1] - P[1][0] + Q_angle);
+  P[0][1] -= deltaTime * P[1][1];
+  P[1][0] -= deltaTime * P[1][1];
+  P[1][1] += Q_gyro * deltaTime;
 
-bool checkThrottleSafe() {
-  for (int i = 0; i < 4; ++i) {
-    if (lastThrottle[i] < minThrottle) {
-      throttleSafe = false;
-      return false;
-    }
-  }
-  throttleSafe = true;
-  return true;
-}
+  // Kalman filter update step
+  float S = P[0][0] + R_angle;
+  float K_0 = P[0][0] / S;
+  float K_1 = P[1][0] / S;
+  float y = accelYaw - yawAngle;  // Innovation
+  yawAngle += K_0 * y;
+  yawRate += K_1 * y;
 
-float average(const float* array, int size) {
-  float sum = 0;
-  for (int i = 0; i < size; ++i) {
-    sum += array[i];
-  }
-  return sum / size;
+  // Update error covariance
+  float P00_temp = P[0][0];
+  float P01_temp = P[0][1];
+  P[0][0] -= K_0 * P00_temp;
+  P[0][1] -= K_0 * P01_temp;
+  P[1][0] -= K_1 * P00_temp;
+  P[1][1] -= K_1 * P01_temp;
 }
 
 void stabilizeDrone() {
   rollError = roll;  // Current error for roll
   pitchError = pitch;  // Current error for pitch
 
-  // Integral windup prevention
+  // Prevent integral windup
   rollIntegral = constrain(rollIntegral, -rollMaxIntegral, rollMaxIntegral);
   pitchIntegral = constrain(pitchIntegral, -pitchMaxIntegral, pitchMaxIntegral);
 
@@ -232,11 +210,9 @@ void stabilizeDrone() {
   lastRollError = rollError;
   lastPitchError = pitchError;
 
-  // Yaw stabilization (if necessary)
-  float yawError = yawAngle;  // Adjust this if you need a full PID controller for yaw
-  yawIntegral += yawError * deltaTime;  // Update yaw integral term
-  
-  // Integral windup prevention for yaw
+  // Yaw stabilization
+  float yawError = yawAngle;
+  yawIntegral += yawError * deltaTime;
   yawIntegral = constrain(yawIntegral, -yawMaxIntegral, yawMaxIntegral);
 
   yawCorrection = Kp * yawError + Ki * yawIntegral + Kd * (yawError - lastYawError);
@@ -247,7 +223,6 @@ void stabilizeDrone() {
   // Apply throttle corrections for all motors
   int throttleBase = 1500;  // Mid-range throttle
 
-  // Adjust each motor's throttle based on PID corrections
   setThrottleValues(
     throttleBase + rollCorrection - pitchCorrection - yawCorrection,  // Motor 1
     throttleBase - rollCorrection - pitchCorrection + yawCorrection,  // Motor 2
@@ -255,6 +230,11 @@ void stabilizeDrone() {
     throttleBase - rollCorrection + pitchCorrection - yawCorrection   // Motor 4
   );
 }
+
+
+
+
+
 
 
 void handleSerialCommand(String command) {
