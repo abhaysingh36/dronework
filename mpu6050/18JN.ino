@@ -136,3 +136,178 @@ float calculatePID(float error, float &prevError, float &integral, float kp, flo
   prevError = error;
   return output;
 }
+
+
+
+# second code 
+
+
+
+
+
+
+
+
+/*
+ * Autonomous Drone Controller Code
+ * Modified to use Serial communication instead of Bluetooth.
+ */
+
+#include <Wire.h>
+#include <Arduino.h>
+#include "I2Cdev.h"
+#include "MPU6050_6Axis_MotionApps20.h"
+
+// ---------------- Constants ---------------------------------------
+#define INTERRUPT_PIN 2
+
+#define YAW         0
+#define PITCH       1
+#define ROLL        2
+#define THROTTLE    3
+
+#define X           0
+#define Y           1
+#define Z           2
+#define MPU_ADDRESS 0x68
+
+#define STOPPED     0
+#define STARTING    1
+#define STARTED     2
+
+float instruction[4] = {0, 4, 0, 0};
+
+// ---------------- MPU Variables ---------------------------------------
+long gyro_offsets[3] = {130, 44, 35};
+long acc_offsets[3] = {-3000, -581, 649};
+MPU6050 mpu;
+
+bool dmpReady = false;
+uint8_t mpuIntStatus;
+uint8_t devStatus;
+uint16_t packetSize;
+uint16_t fifoCount;
+uint8_t fifoBuffer[64];
+
+volatile bool mpuInterrupt = false;
+void dmpDataReady() {
+    mpuInterrupt = true;
+}
+
+Quaternion q;
+VectorFloat gravity;
+float measures[3] = {0, 0, 0};
+bool started = false;
+
+int motor_lf = 11, motor_lb = 10, motor_rf = 9, motor_rb = 6;
+int motor_lf_throttle = 0, motor_lb_throttle = 0, motor_rf_throttle = 0, motor_rb_throttle = 0;
+
+float errors[3];
+float error_sum[3] = {0, 0, 0};
+float previous_error[3] = {0, 0, 0};
+float Kp[3] = {0, 0.9, 0.9};
+float Ki[3] = {0.00, 0.00, 0.00};
+float Kd[3] = {0, 13, 13};
+
+int status = STOPPED;
+
+float i = 0;
+float start_seconds = 0;
+
+void setup() {
+  stopMotors();
+  Wire.begin();
+  Serial.begin(115200);  // Initialize serial communication
+
+  pinMode(13, OUTPUT);
+  digitalWrite(13, HIGH);
+  setupMPUv2();
+  digitalWrite(13, LOW);
+  start_seconds = millis() / 1000;
+}
+
+void loop() {
+  if (!dmpReady) {
+    Serial.println("MPU error");
+    return;
+  }
+
+  i++;
+  Serial.println(i / (millis() / 1000 - start_seconds));
+
+  readSerialCommands();  // Read commands from Raspberry Pi
+  calculateAnglesv2();
+  calculateErrors();
+
+  if (started) {
+    pidController();
+    applyMotorSpeeds();
+  } else {
+    stopMotors();
+  }
+}
+
+void readSerialCommands() {
+  if (Serial.available() >= 4) {
+    for (int i = 0; i < 4; i++) {
+      instruction[i] = Serial.parseFloat();
+    }
+  }
+}
+
+void setupMPUv2() {
+  Wire.begin();
+  mpu.initialize();
+  devStatus = mpu.dmpInitialize();
+
+  mpu.setXGyroOffset(gyro_offsets[0]);
+  mpu.setYGyroOffset(gyro_offsets[1]);
+  mpu.setZGyroOffset(gyro_offsets[2]);
+  mpu.setZAccelOffset(gyro_offsets[2]);
+
+  if (devStatus == 0) {
+    Serial.println(F("Enabling DMP..."));
+    mpu.setDMPEnabled(true);
+    attachInterrupt(digitalPinToInterrupt(INTERRUPT_PIN), dmpDataReady, RISING);
+    mpuIntStatus = mpu.getIntStatus();
+    dmpReady = true;
+    packetSize = mpu.dmpGetFIFOPacketSize();
+  } else {
+    Serial.print(F("DMP Initialization failed (code "));
+    Serial.print(devStatus);
+    Serial.println(F(")"));
+  }
+}
+
+void calculateAnglesv2() {
+  while (!mpuInterrupt && fifoCount < packetSize) {
+    fifoCount = mpu.getFIFOCount();
+  }
+
+  mpuInterrupt = false;
+  mpuIntStatus = mpu.getIntStatus();
+  fifoCount = mpu.getFIFOCount();
+
+  if ((mpuIntStatus & _BV(MPU6050_INTERRUPT_FIFO_OFLOW_BIT)) || fifoCount >= 1024) {
+    mpu.resetFIFO();
+    fifoCount = mpu.getFIFOCount();
+    Serial.println(F("FIFO overflow!"));
+  } else if (mpuIntStatus & _BV(MPU6050_INTERRUPT_DMP_INT_BIT)) {
+    while (fifoCount < packetSize) fifoCount = mpu.getFIFOCount();
+
+    mpu.getFIFOBytes(fifoBuffer, packetSize);
+    fifoCount -= packetSize;
+    mpu.dmpGetQuaternion(&q, fifoBuffer);
+    mpu.dmpGetGravity(&gravity, &q);
+    mpu.dmpGetYawPitchRoll(measures, &q, &gravity);
+    measures[YAW] = measures[YAW] * 180 / M_PI;
+    measures[PITCH] = measures[PITCH] * 180 / M_PI;
+    measures[ROLL] = measures[ROLL] * 180 / M_PI;
+  }
+}
+
+void calculateErrors() {
+  errors[YAW] = instruction[YAW] - measures[YAW];
+  errors[PITCH] = instruction[PITCH] - measures[PITCH];
+  errors[ROLL] = instruction[ROLL] - measures[ROLL];
+}
